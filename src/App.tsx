@@ -1,10 +1,11 @@
-import { useState, useMemo, memo, lazy, Suspense, useCallback } from 'react';
-import { MapPin, List, Utensils, Info, ChevronRight, Droplets, TreePine, Footprints, Landmark, Building2, ArrowLeft, MapIcon, Navigation, Hash, Lightbulb, Star, ExternalLink, MessageCircle, Phone, Globe, UtensilsCrossed, Search, Award, Compass, Wine, ShoppingBag, Palette, Heart, X, Calendar, Activity, BookOpen, Coffee, Sparkles, Route } from 'lucide-react';
+import { useState, useMemo, memo, lazy, Suspense, useCallback, useEffect } from 'react';
+import { MapPin, List, Utensils, Info, ChevronRight, Droplets, TreePine, Footprints, Landmark, Building2, ArrowLeft, MapIcon, Navigation, Hash, Lightbulb, Star, ExternalLink, MessageCircle, Phone, Globe, UtensilsCrossed, Search, Award, Compass, Wine, ShoppingBag, Palette, Heart, X, Calendar, Activity, BookOpen, Coffee, Sparkles, Route, ShieldAlert } from 'lucide-react';
 import { allPoints, places, restaurants, activities, bodegas, shops, culturalSpaces, wellness, gastroItems, categoryColors, categoryLabels, type PointOfInterest, type GastroItem, type Category } from './data';
 import { type ProductClub } from './types';
 import { comarcaEvents } from './events';
 import { generateItinerary, type BudgetLevel, type ItineraryDay } from './itineraryGenerator';
 import { APP_CONFIG } from './config';
+import QRCode from 'react-qr-code';
 
 // Lazy-load heavy map components
 const MapContainer = lazy(() => import('react-leaflet').then(m => ({ default: m.MapContainer })));
@@ -12,10 +13,16 @@ const TileLayer = lazy(() => import('react-leaflet').then(m => ({ default: m.Til
 const CircleMarker = lazy(() => import('react-leaflet').then(m => ({ default: m.CircleMarker })));
 const Popup = lazy(() => import('react-leaflet').then(m => ({ default: m.Popup })));
 
+// ─── INIT URL PARSER ─────────────────────────────────────────
+const urlParams = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '');
+const hostParam = urlParams.get('host');
+const adminParam = urlParams.get('admin');
+
 type Tab = 'mapa' | 'explorar' | 'itinerario' | 'gastro' | 'info';
 
 // Pre-compute constants outside component
 const allCats: Category[] = ['bañarse','naturaleza','ruta','historia','pueblo','restaurante','actividad','bodega','tienda','cultura','bienestar'];
+const competitiveCategories: Category[] = ['restaurante', 'actividad', 'bodega', 'tienda', 'bienestar'];
 const catCounts = Object.fromEntries(allCats.map(c => [c, allPoints.filter(p => p.category === c).length])) as Record<Category, number>;
 
 const catIcons: Record<Category, React.ReactNode> = {
@@ -396,6 +403,51 @@ const ItineraryTab = memo(function ItineraryTab({ onSelectPoi }: { onSelectPoi: 
   );
 });
 
+// ─── ADMIN B2B PORTAL ───────────────────────────────────────
+const AdminPortal = memo(function AdminPortal({ onClose }: { onClose: () => void }) {
+  const [selectedHostId, setSelectedHostId] = useState('');
+  
+  const clients = useMemo(() => allPoints.filter(p => competitiveCategories.includes(p.category)).sort((a,b) => a.name.localeCompare(b.name)), []);
+  
+  const qrUrl = typeof window !== 'undefined' ? window.location.origin + "/?host=" + selectedHostId : '';
+
+  return (
+    <div className="fixed inset-0 bg-gray-50 z-[9999] overflow-y-auto flex flex-col p-6">
+      <div className="flex items-center justify-between mb-8">
+        <h2 className="text-2xl font-black text-[#1b4332] flex items-center gap-2"><ShieldAlert size={28}/> Portal Admin B2B</h2>
+        <button onClick={onClose} className="p-2 bg-gray-200 rounded-full"><X size={20}/></button>
+      </div>
+
+      <p className="text-gray-600 text-sm mb-6 bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
+        Genera un enlace y Código QR personalizado para un negocio cliente. Cuando sus clientes escaneen este QR, <strong>no verán a la competencia</strong> de su mismo sector en la guía.
+      </p>
+
+      <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Selecciona el Cliente (Anfitrión)</label>
+      <select 
+        className="w-full bg-white border-2 border-emerald-100 rounded-xl p-4 text-emerald-900 font-bold outline-none mb-8 shadow-sm"
+        onChange={(e) => setSelectedHostId(e.target.value)}
+        value={selectedHostId}
+      >
+        <option value="" disabled>Elige un cliente...</option>
+        {clients.map(c => (
+          <option key={c.id} value={c.id}>{c.name} ({categoryLabels[c.category] || c.category})</option>
+        ))}
+      </select>
+
+      {selectedHostId && (
+        <div className="bg-white rounded-3xl p-8 shadow-xl border border-gray-100 flex flex-col items-center text-center">
+          <h3 className="font-black text-xl text-gray-900 mb-6">Su Código QR Exclusivo</h3>
+          <div className="bg-white p-4 rounded-2xl border-4 border-[#1b4332] shadow-sm mb-6">
+            <QRCode value={qrUrl} size={200} level="H" />
+          </div>
+          <p className="text-xs text-gray-500 mb-6 break-all bg-gray-50 p-3 rounded-lg w-full font-mono">{qrUrl}</p>
+          <button onClick={() => window.open(qrUrl, '_blank')} className="w-full bg-emerald-600 text-white font-bold py-3 rounded-xl shadow-lg flex items-center justify-center gap-2 active:scale-95 transition-transform"><ExternalLink size={18}/> Probar Enlace Camaleón</button>
+        </div>
+      )}
+    </div>
+  );
+});
+
 // ─── MAIN APP ────────────────────────────────────────────────
 export default function App() {
   const [tab, setTab] = useState<Tab>('explorar');
@@ -405,13 +457,43 @@ export default function App() {
   const [filter, setFilter] = useState<Category | ProductClub | 'all'>('all');
   const [search, setSearch] = useState('');
 
+  // URL B2B State
+  const [host, setHost] = useState<PointOfInterest | null>(null);
+  const [isAdmin, setIsAdmin] = useState(adminParam === 'true');
+
+  useEffect(() => {
+    if (hostParam) {
+      const found = allPoints.find(p => p.id === hostParam);
+      if (found) {
+        setHost(found);
+        APP_CONFIG.baseAccommodation = {
+          name: found.name,
+          lat: found.lat,
+          lng: found.lng,
+          location: found.location
+        };
+      }
+    }
+  }, []);
+
+  const isCompetitor = useCallback((poi: PointOfInterest) => {
+    if (!host) return false;
+    if (poi.id === host.id) return false; // El propio host nunca se oculta a sí mismo
+    if (competitiveCategories.includes(host.category)) {
+      return poi.category === host.category; // Oculta a todos los demás de la misma categoría comercial
+    }
+    return false;
+  }, [host]);
+
+  const visiblePoints = useMemo(() => allPoints.filter(p => !isCompetitor(p)), [isCompetitor]);
+
   const filtered = useMemo(() => {
-    let items = allPoints;
+    let items = visiblePoints;
     if (filter !== 'all') {
       if (['cicloturismo','bienestar','gastronomia','cultura'].includes(filter)) {
-        items = allPoints.filter(p => p.productClub === filter);
+        items = visiblePoints.filter(p => p.productClub === filter);
       } else {
-        items = allPoints.filter(p => p.category === filter as Category);
+        items = visiblePoints.filter(p => p.category === filter as Category);
       }
     }
     
@@ -420,7 +502,11 @@ export default function App() {
       items = items.filter(p => p.name.toLowerCase().includes(q) || p.location.toLowerCase().includes(q) || p.description.toLowerCase().includes(q));
     }
     return items;
-  }, [filter, search]);
+  }, [filter, search, visiblePoints]);
+
+  if (isAdmin) {
+    return <AdminPortal onClose={() => setIsAdmin(false)} />;
+  }
 
   const handleSetDetail = useCallback((p: PointOfInterest) => setDetail(p), []);
 
