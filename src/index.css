@@ -1,0 +1,14 @@
+@import "tailwindcss";
+
+@theme {
+  --color-rinconcito: #1b4332;
+  --color-accent: #d8cba1;
+  --color-rinconcito-100: #d1dfd6;
+}
+
+body {
+  background-color: var(--color-gray-50);
+  color: var(--color-gray-900);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
