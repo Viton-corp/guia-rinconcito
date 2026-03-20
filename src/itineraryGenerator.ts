@@ -8,12 +8,17 @@ export interface ItineraryConfig {
   baseLocation: { lat: number; lng: number };
 }
 
+export interface ItinerarySlot {
+  selected: PointOfInterest;
+  alternatives: PointOfInterest[];
+}
+
 export interface ItineraryDay {
   dayNumber: number;
-  morning: PointOfInterest | null;
-  lunch: PointOfInterest | null;
-  afternoon: PointOfInterest | null;
-  dinner: PointOfInterest | null;
+  morning: ItinerarySlot | null;
+  lunch: ItinerarySlot | null;
+  afternoon: ItinerarySlot | null;
+  dinner: ItinerarySlot | null;
 }
 
 // Haversine formula for distance in km
@@ -28,75 +33,94 @@ function getDistance(lat1: number, lon1: number, lat2: number, lon2: number) {
 
 function filterByBudget(poi: PointOfInterest, budget: BudgetLevel): boolean {
   if (poi.category !== 'restaurante' && poi.category !== 'actividad' && poi.category !== 'bodega') {
-    // Free things (pueblos, naturaleza, etc) are always allowed
     return true; 
   }
   
   const price = poi.priceRange || '';
-  if (budget === 'eco') return price.length <= 1; // '', '€'
-  if (budget === 'mid') return price.length <= 2; // '', '€', '€€'
-  return true; // Premium allows everything
+  if (budget === 'eco') return price.length <= 1;
+  if (budget === 'mid') return price.length <= 2;
+  return true;
 }
+
+const MAX_ALTERNATIVES = 4;
 
 export function generateItinerary(config: ItineraryConfig): ItineraryDay[] {
   const { days, budget, baseLocation } = config;
   
-  // 1. Separate items by type
-  let availablePlaces = allPoints.filter(p => 
+  // Separate items by type
+  const allPlaces = allPoints.filter(p => 
     ['naturaleza', 'ruta', 'historia', 'pueblo', 'bañarse', 'actividad', 'bodega', 'cultura', 'bienestar'].includes(p.category) && 
     filterByBudget(p, budget)
   );
   
-  let availableRestaurants = allPoints.filter(p => p.category === 'restaurante' && filterByBudget(p, budget));
+  const allRestaurants = allPoints.filter(p => p.category === 'restaurante' && filterByBudget(p, budget));
 
   // Sort places by recommended first
-  availablePlaces.sort((a, b) => (b.recommended === a.recommended ? 0 : b.recommended ? 1 : -1));
-  availableRestaurants.sort((a, b) => (b.recommended === a.recommended ? 0 : b.recommended ? 1 : -1));
+  allPlaces.sort((a, b) => (b.recommended === a.recommended ? 0 : b.recommended ? 1 : -1));
+  allRestaurants.sort((a, b) => (b.recommended === a.recommended ? 0 : b.recommended ? 1 : -1));
 
+  const usedIds = new Set<string>();
   const itinerary: ItineraryDay[] = [];
 
   for (let d = 1; d <= days; d++) {
-    // 1. Pick a "Day Center" = highest priority unvisited place
-    const morningPlace = availablePlaces.find(p => p) || null; // first element
+    // 1. Morning — pick highest priority unvisited place
+    const morningPlace = allPlaces.find(p => !usedIds.has(p.id)) || null;
     if (!morningPlace) break;
-    
-    // Remove from available
-    availablePlaces = availablePlaces.filter(p => p.id !== morningPlace.id);
+    usedIds.add(morningPlace.id);
 
-    // 2. Find closest restaurant for lunch (within 15km of morningPlace)
-    // Try to find one nearby, fallback to anything if none close
-    let lunchRestaurants = availableRestaurants.map(r => ({
-      ...r, dist: getDistance(morningPlace.lat, morningPlace.lng, r.lat, r.lng)
-    })).sort((a, b) => a.dist - b.dist);
-    
-    const lunchRest = lunchRestaurants.find(r => r.dist < 20) || lunchRestaurants[0] || null;
-    if (lunchRest) availableRestaurants = availableRestaurants.filter(r => r.id !== lunchRest.id);
+    // Morning alternatives: other places not yet used, sorted by recommendation
+    const morningAlts = allPlaces
+      .filter(p => !usedIds.has(p.id))
+      .slice(0, MAX_ALTERNATIVES);
 
-    // 3. Find afternoon activity near morning place
-    let afternoonPlaces = availablePlaces.map(p => ({
-      ...p, dist: getDistance(morningPlace.lat, morningPlace.lng, p.lat, p.lng)
-    })).sort((a, b) => a.dist - b.dist);
-    
-    // Prioritize different categories for afternoon if morning was nature, maybe afternoon is pueblo
-    const afternoonPlace = afternoonPlaces.find(p => p.dist < 15 && p.id !== morningPlace.id) || afternoonPlaces[0] || null;
-    if (afternoonPlace) availablePlaces = availablePlaces.filter(p => p.id !== afternoonPlace.id);
+    // 2. Lunch — closest restaurant to morning place
+    const lunchByDist = allRestaurants
+      .filter(r => !usedIds.has(r.id))
+      .map(r => ({ ...r, dist: getDistance(morningPlace.lat, morningPlace.lng, r.lat, r.lng) }))
+      .sort((a, b) => a.dist - b.dist);
 
-    // 4. Find dinner near Base Location (config.baseLocation)
-    let dinnerRestaurants = availableRestaurants.map(r => ({
-      ...r, dist: getDistance(baseLocation.lat, baseLocation.lng, r.lat, r.lng)
-    })).sort((a, b) => a.dist - b.dist);
-    
-    const dinnerRest = dinnerRestaurants.find(r => r.dist < 10) || dinnerRestaurants[0] || null;
-    if (dinnerRest) availableRestaurants = availableRestaurants.filter(r => r.id !== dinnerRest.id);
+    const lunchRest = lunchByDist.find(r => r.dist < 20) || lunchByDist[0] || null;
+    if (lunchRest) usedIds.add(lunchRest.id);
+
+    const lunchAlts = lunchByDist
+      .filter(r => r.id !== lunchRest?.id && !usedIds.has(r.id))
+      .slice(0, MAX_ALTERNATIVES);
+
+    // 3. Afternoon — near morning place, different if possible
+    const afternoonByDist = allPlaces
+      .filter(p => !usedIds.has(p.id))
+      .map(p => ({ ...p, dist: getDistance(morningPlace.lat, morningPlace.lng, p.lat, p.lng) }))
+      .sort((a, b) => a.dist - b.dist);
+
+    const afternoonPlace = afternoonByDist.find(p => p.dist < 15) || afternoonByDist[0] || null;
+    if (afternoonPlace) usedIds.add(afternoonPlace.id);
+
+    const afternoonAlts = afternoonByDist
+      .filter(p => p.id !== afternoonPlace?.id && !usedIds.has(p.id))
+      .slice(0, MAX_ALTERNATIVES);
+
+    // 4. Dinner — near base accommodation
+    const dinnerByDist = allRestaurants
+      .filter(r => !usedIds.has(r.id))
+      .map(r => ({ ...r, dist: getDistance(baseLocation.lat, baseLocation.lng, r.lat, r.lng) }))
+      .sort((a, b) => a.dist - b.dist);
+
+    const dinnerRest = dinnerByDist.find(r => r.dist < 10) || dinnerByDist[0] || null;
+    if (dinnerRest) usedIds.add(dinnerRest.id);
+
+    const dinnerAlts = dinnerByDist
+      .filter(r => r.id !== dinnerRest?.id && !usedIds.has(r.id))
+      .slice(0, MAX_ALTERNATIVES);
 
     itinerary.push({
       dayNumber: d,
-      morning: morningPlace,
-      lunch: lunchRest,
-      afternoon: afternoonPlace,
-      dinner: dinnerRest
+      morning: morningPlace ? { selected: morningPlace, alternatives: morningAlts } : null,
+      lunch: lunchRest ? { selected: lunchRest, alternatives: lunchAlts } : null,
+      afternoon: afternoonPlace ? { selected: afternoonPlace, alternatives: afternoonAlts } : null,
+      dinner: dinnerRest ? { selected: dinnerRest, alternatives: dinnerAlts } : null,
     });
   }
 
   return itinerary;
 }
+

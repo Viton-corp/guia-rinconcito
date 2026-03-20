@@ -4,6 +4,7 @@ import { allPoints, places, restaurants, activities, bodegas, shops, culturalSpa
 import { type ProductClub } from './types';
 import { comarcaEvents } from './events';
 import { generateItinerary, type BudgetLevel, type ItineraryDay } from './itineraryGenerator';
+import { accommodations, type Accommodation } from './accommodations';
 import { APP_CONFIG } from './config';
 import QRCode from 'react-qr-code';
 
@@ -232,21 +233,40 @@ const ProductClubs = memo(function ProductClubs({ onSelectClub }: { onSelectClub
 });
 
 // ─── ITINERARY GENERATOR WIZARD & TIMELINE ──────────────────
-const ItineraryTab = memo(function ItineraryTab({ onSelectPoi }: { onSelectPoi: (p: PointOfInterest) => void }) {
+const ItineraryTab = memo(function ItineraryTab({ onSelectPoi, defaultAccommodationId }: { onSelectPoi: (p: PointOfInterest) => void; defaultAccommodationId?: string }) {
   const [days, setDays] = useState(3);
   const [budget, setBudget] = useState<BudgetLevel>('mid');
+  const [selectedAccommodation, setSelectedAccommodation] = useState<Accommodation>(
+    accommodations.find(a => a.id === defaultAccommodationId) || accommodations[0]
+  );
   const [result, setResult] = useState<ItineraryDay[] | null>(null);
 
   const handleGenerate = () => {
     const itinerary = generateItinerary({
       days,
       budget,
-      baseLocation: APP_CONFIG.baseAccommodation,
+      baseLocation: { lat: selectedAccommodation.lat, lng: selectedAccommodation.lng },
     });
     setResult(itinerary);
   };
 
+  const [editingSlot, setEditingSlot] = useState<{ dayIndex: number; slotKey: 'morning'|'lunch'|'afternoon'|'dinner' } | null>(null);
+
+  const handleSwap = (dayIndex: number, slotKey: 'morning'|'lunch'|'afternoon'|'dinner', newPoi: PointOfInterest) => {
+    if (!result) return;
+    const updated = [...result];
+    const slot = updated[dayIndex][slotKey];
+    if (!slot) return;
+    const oldSelected = slot.selected;
+    slot.selected = newPoi;
+    slot.alternatives = [oldSelected, ...slot.alternatives.filter(a => a.id !== newPoi.id)].slice(0, 4);
+    setResult(updated);
+    setEditingSlot(null);
+  };
+
   if (result) {
+    const editSlot = editingSlot ? result[editingSlot.dayIndex]?.[editingSlot.slotKey] : null;
+
     return (
       <div className="h-full overflow-y-auto bg-gray-50 pb-8">
         <div className="bg-gradient-to-br from-[#1b4332] to-[#2d6a4f] p-6 text-white sticky top-0 z-20 shadow-md">
@@ -256,12 +276,13 @@ const ItineraryTab = memo(function ItineraryTab({ onSelectPoi }: { onSelectPoi: 
             <div className="w-8"></div>
           </div>
           <h2 className="text-2xl font-black">{days} Días en el Matarraña</h2>
-          <p className="text-white/70 text-sm mt-1 flex items-center gap-1"><MapPin size={12}/> Base: {APP_CONFIG.baseAccommodation.name}</p>
+          <p className="text-white/70 text-sm mt-1 flex items-center gap-1"><MapPin size={12}/> Base: {selectedAccommodation.name} ({selectedAccommodation.location})</p>
+          <p className="text-[10px] text-white/50 mt-1">Toca 🔄 en cada actividad para ver más opciones</p>
         </div>
         
         <div className="p-4 flex flex-col gap-6">
-          {result.map((day, i) => (
-            <div key={i} className="relative">
+          {result.map((day, dayIdx) => (
+            <div key={dayIdx} className="relative">
               <div className="absolute top-8 bottom-0 left-[15px] w-px bg-emerald-200"></div>
               
               <h3 className="flex items-center gap-3 font-black text-emerald-900 mb-4 bg-emerald-50 w-max px-4 py-1.5 rounded-full border border-emerald-100 shadow-sm relative z-10">
@@ -274,12 +295,15 @@ const ItineraryTab = memo(function ItineraryTab({ onSelectPoi }: { onSelectPoi: 
                 {day.morning && (
                   <div className="relative">
                     <div className="absolute top-4 -left-[31px] w-3 h-3 rounded-full border-2 border-emerald-400 bg-white"></div>
-                    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest block mb-1">Mañana</span>
-                    <button onClick={() => onSelectPoi(day.morning!)} className="bg-white border border-emerald-100 shadow-sm rounded-xl p-3 flex gap-3 text-left w-full active:scale-95 transition-transform">
-                      {day.morning.image ? <img src={day.morning.image} alt="" className="w-16 h-16 rounded-lg object-cover shrink-0"/> : <div className="w-16 h-16 rounded-lg bg-emerald-50 text-emerald-500 flex items-center justify-center shrink-0"><MapPin size={24}/></div>}
-                      <div>
-                        <h4 className="font-bold text-gray-900 text-sm">{day.morning.name}</h4>
-                        <p className="text-gray-500 text-[11px] line-clamp-2 mt-0.5">{day.morning.description}</p>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Mañana</span>
+                      {day.morning.alternatives.length > 0 && <button onClick={() => setEditingSlot({ dayIndex: dayIdx, slotKey: 'morning' })} className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100 flex items-center gap-1 active:scale-95">🔄 Cambiar</button>}
+                    </div>
+                    <button onClick={() => onSelectPoi(day.morning!.selected)} className="bg-white border border-emerald-100 shadow-sm rounded-xl p-3 flex gap-3 text-left w-full active:scale-95 transition-transform">
+                      {day.morning.selected.image ? <img src={day.morning.selected.image} alt="" className="w-16 h-16 rounded-lg object-cover shrink-0"/> : <div className="w-16 h-16 rounded-lg bg-emerald-50 text-emerald-500 flex items-center justify-center shrink-0"><MapPin size={24}/></div>}
+                      <div className="flex-1 min-w-0">
+                        <h4 className="font-bold text-gray-900 text-sm">{day.morning.selected.name}</h4>
+                        <p className="text-gray-500 text-[11px] line-clamp-2 mt-0.5">{day.morning.selected.description}</p>
                       </div>
                     </button>
                   </div>
@@ -289,12 +313,15 @@ const ItineraryTab = memo(function ItineraryTab({ onSelectPoi }: { onSelectPoi: 
                 {day.lunch && (
                   <div className="relative">
                     <div className="absolute top-4 -left-[31px] w-3 h-3 rounded-full border-2 border-rose-400 bg-white"></div>
-                    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest block mb-1">Comida</span>
-                    <button onClick={() => onSelectPoi(day.lunch!)} className="bg-rose-50 border border-rose-100/50 rounded-xl p-3 flex gap-3 text-left w-full active:scale-95 transition-transform">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Comida</span>
+                      {day.lunch.alternatives.length > 0 && <button onClick={() => setEditingSlot({ dayIndex: dayIdx, slotKey: 'lunch' })} className="text-[10px] font-bold text-rose-600 bg-rose-50 px-2 py-0.5 rounded-full border border-rose-100 flex items-center gap-1 active:scale-95">🔄 Cambiar</button>}
+                    </div>
+                    <button onClick={() => onSelectPoi(day.lunch!.selected)} className="bg-rose-50 border border-rose-100/50 rounded-xl p-3 flex gap-3 text-left w-full active:scale-95 transition-transform">
                       <div className="w-10 h-10 rounded-full bg-rose-100 text-rose-500 flex items-center justify-center shrink-0"><Utensils size={16}/></div>
                       <div className="flex-1 min-w-0">
-                        <h4 className="font-bold text-rose-900 text-sm truncate">{day.lunch.name}</h4>
-                        <p className="text-rose-700/70 text-[11px]">{day.lunch.priceRange} · {day.lunch.location}</p>
+                        <h4 className="font-bold text-rose-900 text-sm truncate">{day.lunch.selected.name}</h4>
+                        <p className="text-rose-700/70 text-[11px]">{day.lunch.selected.priceRange} · {day.lunch.selected.location}</p>
                       </div>
                     </button>
                   </div>
@@ -304,12 +331,15 @@ const ItineraryTab = memo(function ItineraryTab({ onSelectPoi }: { onSelectPoi: 
                 {day.afternoon && (
                   <div className="relative">
                     <div className="absolute top-4 -left-[31px] w-3 h-3 rounded-full border-2 border-orange-400 bg-white"></div>
-                    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest block mb-1">Tarde</span>
-                    <button onClick={() => onSelectPoi(day.afternoon!)} className="bg-white border border-orange-100 shadow-sm rounded-xl p-3 flex gap-3 text-left w-full active:scale-95 transition-transform">
-                      {day.afternoon.image ? <img src={day.afternoon.image} alt="" className="w-16 h-16 rounded-lg object-cover shrink-0"/> : <div className="w-16 h-16 rounded-lg bg-orange-50 text-orange-500 flex items-center justify-center shrink-0"><MapPin size={24}/></div>}
-                      <div>
-                        <h4 className="font-bold text-gray-900 text-sm">{day.afternoon.name}</h4>
-                        <p className="text-gray-500 text-[11px] line-clamp-2 mt-0.5">{day.afternoon.description}</p>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Tarde</span>
+                      {day.afternoon.alternatives.length > 0 && <button onClick={() => setEditingSlot({ dayIndex: dayIdx, slotKey: 'afternoon' })} className="text-[10px] font-bold text-orange-600 bg-orange-50 px-2 py-0.5 rounded-full border border-orange-100 flex items-center gap-1 active:scale-95">🔄 Cambiar</button>}
+                    </div>
+                    <button onClick={() => onSelectPoi(day.afternoon!.selected)} className="bg-white border border-orange-100 shadow-sm rounded-xl p-3 flex gap-3 text-left w-full active:scale-95 transition-transform">
+                      {day.afternoon.selected.image ? <img src={day.afternoon.selected.image} alt="" className="w-16 h-16 rounded-lg object-cover shrink-0"/> : <div className="w-16 h-16 rounded-lg bg-orange-50 text-orange-500 flex items-center justify-center shrink-0"><MapPin size={24}/></div>}
+                      <div className="flex-1 min-w-0">
+                        <h4 className="font-bold text-gray-900 text-sm">{day.afternoon.selected.name}</h4>
+                        <p className="text-gray-500 text-[11px] line-clamp-2 mt-0.5">{day.afternoon.selected.description}</p>
                       </div>
                     </button>
                   </div>
@@ -319,12 +349,15 @@ const ItineraryTab = memo(function ItineraryTab({ onSelectPoi }: { onSelectPoi: 
                 {day.dinner && (
                   <div className="relative">
                     <div className="absolute top-4 -left-[31px] w-3 h-3 rounded-full border-2 border-indigo-400 bg-slate-800"></div>
-                    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest block mb-1">Cena (Cerca de tu hotel)</span>
-                    <button onClick={() => onSelectPoi(day.dinner!)} className="bg-indigo-50 border border-indigo-100/50 rounded-xl p-3 flex gap-3 text-left w-full active:scale-95 transition-transform">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Cena (Cerca de {selectedAccommodation.name})</span>
+                      {day.dinner.alternatives.length > 0 && <button onClick={() => setEditingSlot({ dayIndex: dayIdx, slotKey: 'dinner' })} className="text-[10px] font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full border border-indigo-100 flex items-center gap-1 active:scale-95">🔄 Cambiar</button>}
+                    </div>
+                    <button onClick={() => onSelectPoi(day.dinner!.selected)} className="bg-indigo-50 border border-indigo-100/50 rounded-xl p-3 flex gap-3 text-left w-full active:scale-95 transition-transform">
                       <div className="w-10 h-10 rounded-full bg-indigo-100 text-indigo-500 flex items-center justify-center shrink-0"><Wine size={16}/></div>
                       <div className="flex-1 min-w-0">
-                        <h4 className="font-bold text-indigo-900 text-sm truncate">{day.dinner.name}</h4>
-                        <p className="text-indigo-700/70 text-[11px]">{day.dinner.priceRange} · {day.dinner.location}</p>
+                        <h4 className="font-bold text-indigo-900 text-sm truncate">{day.dinner.selected.name}</h4>
+                        <p className="text-indigo-700/70 text-[11px]">{day.dinner.selected.priceRange} · {day.dinner.selected.location}</p>
                       </div>
                     </button>
                   </div>
@@ -337,6 +370,32 @@ const ItineraryTab = memo(function ItineraryTab({ onSelectPoi }: { onSelectPoi: 
             <Sparkles size={16} className="text-[#d8cba1]"/> ¡Guardar Mi Itinerario!
           </button>
         </div>
+
+        {/* ── SWAP BOTTOM SHEET ── */}
+        {editingSlot && editSlot && (
+          <div className="fixed inset-0 z-[9999] flex flex-col justify-end">
+            <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setEditingSlot(null)}></div>
+            <div className="relative bg-white rounded-t-3xl p-5 pb-8 shadow-2xl max-h-[70vh] overflow-y-auto animate-[slideUp_0.2s_ease-out]">
+              <div className="w-10 h-1 bg-gray-200 rounded-full mx-auto mb-4"></div>
+              <h3 className="font-black text-gray-900 text-base mb-1">🔄 Elegir alternativa</h3>
+              <p className="text-gray-500 text-xs mb-4">Toca una opción para intercambiarla</p>
+              <div className="flex flex-col gap-2.5">
+                {editSlot.alternatives.map((alt) => (
+                  <button key={alt.id} onClick={() => handleSwap(editingSlot.dayIndex, editingSlot.slotKey, alt)} className="bg-gray-50 border border-gray-100 rounded-xl p-3 flex gap-3 text-left w-full active:scale-[0.98] transition-transform hover:bg-emerald-50 hover:border-emerald-200">
+                    {alt.image ? <img src={alt.image} alt="" className="w-14 h-14 rounded-lg object-cover shrink-0"/> : <div className="w-14 h-14 rounded-lg bg-gray-100 text-gray-400 flex items-center justify-center shrink-0"><MapPin size={20}/></div>}
+                    <div className="flex-1 min-w-0">
+                      <h4 className="font-bold text-gray-900 text-sm truncate">{alt.name}</h4>
+                      <p className="text-gray-500 text-[11px] line-clamp-2 mt-0.5">{alt.description}</p>
+                      {alt.priceRange && <span className="text-[10px] font-bold text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded mt-1 inline-block">{alt.priceRange} · {alt.location}</span>}
+                    </div>
+                    <ChevronRight size={14} className="text-gray-300 shrink-0 self-center"/>
+                  </button>
+                ))}
+              </div>
+              <button onClick={() => setEditingSlot(null)} className="mt-4 w-full bg-gray-100 text-gray-600 font-bold py-3 rounded-xl active:scale-95 transition-transform">Cancelar</button>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -349,12 +408,30 @@ const ItineraryTab = memo(function ItineraryTab({ onSelectPoi }: { onSelectPoi: 
           <Sparkles size={32} className="text-[#d8cba1]"/>
         </div>
         <h2 className="text-2xl font-black text-white relative z-10 leading-tight mb-2">Creador Mágico<br/>de Itinerarios</h2>
-        <p className="text-white/70 text-sm max-w-[250px] mx-auto relative z-10">Dinos tu plan y diseñaremos una ruta perfecta agrupada por zonas geográficas.</p>
+        <p className="text-white/70 text-sm max-w-[250px] mx-auto relative z-10">Dinos tu plan y diseñaremos una ruta perfecta desde tu alojamiento.</p>
       </div>
 
       <div className="flex-1 px-5 -mt-6 relative z-20">
         <div className="bg-white rounded-3xl p-6 shadow-xl border border-gray-100 flex flex-col gap-6">
           
+          {/* ALOJAMIENTO */}
+          <div>
+            <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-3 flex items-center gap-1.5"><MapPin size={12} className="text-[#1b4332]"/> ¿Dónde te alojas?</label>
+            <select
+              className="w-full bg-gradient-to-r from-amber-50 to-yellow-50 border-2 border-amber-200 rounded-2xl p-4 text-amber-900 font-bold outline-none shadow-sm appearance-none cursor-pointer text-sm"
+              value={selectedAccommodation.id}
+              onChange={(e) => {
+                const acc = accommodations.find(a => a.id === e.target.value);
+                if (acc) setSelectedAccommodation(acc);
+              }}
+            >
+              {accommodations.map(acc => (
+                <option key={acc.id} value={acc.id}>{acc.name} — {acc.location}</option>
+              ))}
+            </select>
+            <p className="text-[10px] text-amber-800/60 mt-2 leading-snug px-1">📍 Las cenas se buscarán cerca de tu alojamiento para que no tengas que conducir lejos.</p>
+          </div>
+
           {/* DURACIÓN */}
           <div>
             <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">¿Cuántos días vienes?</label>
@@ -384,16 +461,6 @@ const ItineraryTab = memo(function ItineraryTab({ onSelectPoi }: { onSelectPoi: 
             </div>
           </div>
 
-          {/* BASE (White Label Demo) */}
-          <div className="bg-amber-50 rounded-2xl p-4 border border-amber-100/50">
-            <label className="block text-[10px] font-bold text-amber-900/60 uppercase tracking-wider mb-2 flex items-center gap-1"><MapPin size={10}/> Alojamiento Base</label>
-            <div className="flex items-center justify-between">
-              <span className="font-bold text-amber-900 text-sm">{APP_CONFIG.baseAccommodation.name} ({APP_CONFIG.baseAccommodation.location})</span>
-              <span className="text-[9px] font-black uppercase text-amber-600 bg-amber-100 px-2 py-0.5 rounded-full">Automático</span>
-            </div>
-            <p className="text-[10px] text-amber-800/70 mt-1.5 leading-snug">Rutas calculadas para que cenes cerca de la cama.</p>
-          </div>
-
           <button onClick={handleGenerate} className="mt-2 bg-gradient-to-r from-[#1b4332] to-[#2d6a4f] text-white font-black py-4 rounded-2xl shadow-xl shadow-[#1b4332]/20 flex items-center justify-center gap-2 active:scale-[0.98] transition-all">
             <Sparkles size={18} className="text-[#d8cba1] animate-pulse"/> Generar Mi Ruta
           </button>
@@ -403,47 +470,108 @@ const ItineraryTab = memo(function ItineraryTab({ onSelectPoi }: { onSelectPoi: 
   );
 });
 
-// ─── ADMIN B2B PORTAL ───────────────────────────────────────
-const AdminPortal = memo(function AdminPortal({ onClose }: { onClose: () => void }) {
-  const [selectedHostId, setSelectedHostId] = useState('');
+// ─── PORTAL PROFESIONAL ─────────────────────────────────────
+const ProfessionalPortal = memo(function ProfessionalPortal({ onClose }: { onClose: () => void }) {
+  const [selectedHostId, setSelectedHostId] = useState(() => {
+    if (typeof window !== 'undefined') return localStorage.getItem('rinconcito_pro_host') || '';
+    return '';
+  });
   
   const clients = useMemo(() => allPoints.filter(p => competitiveCategories.includes(p.category)).sort((a,b) => a.name.localeCompare(b.name)), []);
   
+  const selectedBusiness = useMemo(() => allPoints.find(p => p.id === selectedHostId), [selectedHostId]);
+  
   const qrUrl = typeof window !== 'undefined' ? window.location.origin + "/?host=" + selectedHostId : '';
 
+  const handleSave = () => {
+    if (typeof window !== 'undefined' && selectedHostId) {
+      localStorage.setItem('rinconcito_pro_host', selectedHostId);
+    }
+  };
+
   return (
-    <div className="fixed inset-0 bg-gray-50 z-[9999] overflow-y-auto flex flex-col p-6">
-      <div className="flex items-center justify-between mb-8">
-        <h2 className="text-2xl font-black text-[#1b4332] flex items-center gap-2"><ShieldAlert size={28}/> Portal Admin B2B</h2>
-        <button onClick={onClose} className="p-2 bg-gray-200 rounded-full"><X size={20}/></button>
+    <div className="fixed inset-0 bg-gray-50 z-[9999] overflow-y-auto flex flex-col">
+      {/* Header */}
+      <div className="bg-gradient-to-r from-[#1b4332] to-[#2d6a4f] px-5 py-6 shrink-0">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-xl font-black text-white flex items-center gap-2"><ShieldAlert size={24} className="text-[#d8cba1]"/> Portal Profesional</h2>
+          <button onClick={onClose} className="p-2 bg-white/20 rounded-full backdrop-blur-sm"><X size={20} className="text-white"/></button>
+        </div>
+        <p className="text-white/70 text-sm leading-relaxed">Configura tu guía personalizada. Tus clientes verán la guía <strong className="text-[#d8cba1]">sin competencia directa</strong> de tu mismo sector.</p>
       </div>
 
-      <p className="text-gray-600 text-sm mb-6 bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
-        Genera un enlace y Código QR personalizado para un negocio cliente. Cuando sus clientes escaneen este QR, <strong>no verán a la competencia</strong> de su mismo sector en la guía.
-      </p>
-
-      <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Selecciona el Cliente (Anfitrión)</label>
-      <select 
-        className="w-full bg-white border-2 border-emerald-100 rounded-xl p-4 text-emerald-900 font-bold outline-none mb-8 shadow-sm"
-        onChange={(e) => setSelectedHostId(e.target.value)}
-        value={selectedHostId}
-      >
-        <option value="" disabled>Elige un cliente...</option>
-        {clients.map(c => (
-          <option key={c.id} value={c.id}>{c.name} ({categoryLabels[c.category] || c.category})</option>
-        ))}
-      </select>
-
-      {selectedHostId && (
-        <div className="bg-white rounded-3xl p-8 shadow-xl border border-gray-100 flex flex-col items-center text-center">
-          <h3 className="font-black text-xl text-gray-900 mb-6">Su Código QR Exclusivo</h3>
-          <div className="bg-white p-4 rounded-2xl border-4 border-[#1b4332] shadow-sm mb-6">
-            <QRCode value={qrUrl} size={200} level="H" />
+      <div className="flex-1 p-5 flex flex-col gap-5">
+        {/* Step 1: Selecciona tu negocio */}
+        <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
+          <div className="flex items-center gap-2 mb-4">
+            <span className="w-7 h-7 bg-[#1b4332] text-white rounded-full flex items-center justify-center text-xs font-black">1</span>
+            <h3 className="font-bold text-gray-900 text-sm">¿Cuál es tu negocio?</h3>
           </div>
-          <p className="text-xs text-gray-500 mb-6 break-all bg-gray-50 p-3 rounded-lg w-full font-mono">{qrUrl}</p>
-          <button onClick={() => window.open(qrUrl, '_blank')} className="w-full bg-emerald-600 text-white font-bold py-3 rounded-xl shadow-lg flex items-center justify-center gap-2 active:scale-95 transition-transform"><ExternalLink size={18}/> Probar Enlace Camaleón</button>
+          <select 
+            className="w-full bg-gray-50 border-2 border-emerald-200 rounded-xl p-3.5 text-emerald-900 font-bold outline-none shadow-sm text-sm"
+            onChange={(e) => setSelectedHostId(e.target.value)}
+            value={selectedHostId}
+          >
+            <option value="" disabled>Elige tu negocio...</option>
+            {clients.map(c => (
+              <option key={c.id} value={c.id}>{c.name} — {categoryLabels[c.category]}</option>
+            ))}
+          </select>
         </div>
-      )}
+
+        {/* Step 2: Resumen de lo que pasa */}
+        {selectedBusiness && (
+          <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
+            <div className="flex items-center gap-2 mb-4">
+              <span className="w-7 h-7 bg-[#1b4332] text-white rounded-full flex items-center justify-center text-xs font-black">2</span>
+              <h3 className="font-bold text-gray-900 text-sm">Así funciona para ti</h3>
+            </div>
+            <div className="bg-emerald-50 rounded-xl p-4 border border-emerald-100 mb-4">
+              <p className="text-sm text-emerald-900 font-medium mb-2">Tu negocio: <strong>{selectedBusiness.name}</strong></p>
+              <p className="text-sm text-emerald-800/70 mb-1">Categoría: <strong>{categoryLabels[selectedBusiness.category]}</strong></p>
+              <p className="text-xs text-emerald-700/60 mt-2 leading-relaxed">Cuando tus clientes escaneen tu QR, verán toda la guía <strong>excepto otros {categoryLabels[selectedBusiness.category].toLowerCase()}</strong>. Tu negocio aparecerá destacado.</p>
+            </div>
+            <div className="bg-amber-50 rounded-xl p-3 border border-amber-100">
+              <p className="text-xs text-amber-800 flex items-center gap-1.5"><Lightbulb size={12} className="text-amber-500 shrink-0"/> La guía muestra todas las demás categorías (naturaleza, rutas, pueblos, cultura...) para que tus clientes disfruten al máximo.</p>
+            </div>
+          </div>
+        )}
+
+        {/* Step 3: QR */}
+        {selectedHostId && (
+          <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 flex flex-col items-center">
+            <div className="flex items-center gap-2 mb-5 self-start">
+              <span className="w-7 h-7 bg-[#1b4332] text-white rounded-full flex items-center justify-center text-xs font-black">3</span>
+              <h3 className="font-bold text-gray-900 text-sm">Tu Código QR Personalizado</h3>
+            </div>
+            <div className="bg-white p-4 rounded-2xl border-4 border-[#1b4332] shadow-sm mb-4">
+              <QRCode value={qrUrl} size={180} level="H" />
+            </div>
+            <p className="text-[10px] text-gray-400 mb-4 break-all bg-gray-50 p-2.5 rounded-lg w-full font-mono text-center">{qrUrl}</p>
+            <div className="flex flex-col gap-2.5 w-full">
+              <button onClick={() => { handleSave(); window.open(qrUrl, '_blank'); }} className="w-full bg-gradient-to-r from-[#1b4332] to-[#2d6a4f] text-white font-bold py-3 rounded-xl shadow-lg flex items-center justify-center gap-2 active:scale-95 transition-transform">
+                <ExternalLink size={16} className="text-[#d8cba1]"/> Probar Mi Enlace
+              </button>
+              <button onClick={handleSave} className="w-full bg-emerald-50 text-emerald-700 border border-emerald-200 font-bold py-3 rounded-xl flex items-center justify-center gap-2 active:scale-95 transition-transform">
+                <Sparkles size={16}/> Guardar Configuración
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Tip: Imprime el QR */}
+        {selectedHostId && (
+          <div className="bg-gradient-to-br from-[#1b4332] to-[#2d6a4f] rounded-2xl p-5 text-white">
+            <h3 className="font-bold text-[#d8cba1] text-xs uppercase tracking-wider mb-3">💡 Ideas para tu negocio</h3>
+            <ul className="flex flex-col gap-2 text-white/90 text-sm">
+              <li>📱 Imprime el QR y ponlo en recepción o en las mesas</li>
+              <li>📧 Envíalo por WhatsApp a tus clientes al hacer la reserva</li>
+              <li>🌐 Ponlo en tu web como "Guía del Matarraña"</li>
+              <li>🎯 Tus clientes tendrán una guía exclusiva sin tu competencia</li>
+            </ul>
+          </div>
+        )}
+      </div>
     </div>
   );
 });
@@ -505,7 +633,7 @@ export default function App() {
   }, [filter, search, visiblePoints]);
 
   if (isAdmin) {
-    return <AdminPortal onClose={() => setIsAdmin(false)} />;
+    return <ProfessionalPortal onClose={() => setIsAdmin(false)} />;
   }
 
   const handleSetDetail = useCallback((p: PointOfInterest) => setDetail(p), []);
@@ -690,7 +818,7 @@ export default function App() {
 
         {/* ─── ITINERARIO ──────────────────────────────────── */}
         {tab === 'itinerario' && (
-          <ItineraryTab onSelectPoi={handleSetDetail} />
+          <ItineraryTab onSelectPoi={handleSetDetail} defaultAccommodationId={host?.id} />
         )}
 
         {/* ─── INFO ──────────────────────────────────────── */}
@@ -718,6 +846,12 @@ export default function App() {
                 <a href="https://wa.me/34600000000" className="flex items-center gap-3 w-full p-3 border-b border-gray-50 text-sm font-medium text-green-700"><div className="w-8 h-8 bg-green-50 rounded-lg flex items-center justify-center"><MessageCircle size={14}/></div>WhatsApp<ChevronRight size={14} className="text-gray-300 ml-auto"/></a>
                 <a href="https://elrinconcitomatarranya.com" target="_blank" className="flex items-center gap-3 w-full p-3 text-sm font-medium text-[#1b4332]"><div className="w-8 h-8 bg-[#1b4332]/5 rounded-lg flex items-center justify-center"><ExternalLink size={14}/></div>Nuestra web<ChevronRight size={14} className="text-gray-300 ml-auto"/></a>
               </div>
+              {/* Acceso Profesional */}
+              <button onClick={() => setIsAdmin(true)} className="w-full bg-gradient-to-r from-[#1b4332] to-[#2d6a4f] text-white font-bold py-4 rounded-xl shadow-lg flex items-center justify-center gap-2.5 active:scale-95 transition-transform">
+                <ShieldAlert size={18} className="text-[#d8cba1]"/>
+                <span>Acceso Profesional (Negocios)</span>
+              </button>
+              <p className="text-center text-[10px] text-gray-400 -mt-2">¿Eres un alojamiento, restaurante o empresa de servicios? Configura tu guía personalizada.</p>
               <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
                 <h3 className="font-bold text-gray-900 p-3 pb-1 text-xs uppercase tracking-wider">Enlaces Útiles</h3>
                 {[
